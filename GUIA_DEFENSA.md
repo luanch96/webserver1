@@ -2,10 +2,11 @@
 
 ## 📋 ÍNDICE
 1. [Visión General del Proyecto](#visión-general)
-2. [Flujo Completo del Programa](#flujo-completo)
-3. [Arquitectura y Componentes](#arquitectura)
-4. [Respuestas a la Hoja de Evaluación](#respuestas-evaluacion)
-5. [Preguntas Frecuentes de Defensa](#preguntas-frecuentes)
+2. [Teoría Esencial: Sockets, Headers HTTP y Métodos](#teoría-esencial)
+3. [Flujo Completo del Programa](#flujo-completo)
+4. [Arquitectura y Componentes](#arquitectura)
+5. [Respuestas a la Hoja de Evaluación](#respuestas-evaluacion)
+6. [Preguntas Frecuentes de Defensa](#preguntas-frecuentes)
 
 ---
 
@@ -23,6 +24,354 @@ Webserv es un servidor HTTP/1.1 implementado en C++98 que puede:
 - **I/O Multiplexing**: `poll()` para manejar múltiples conexiones simultáneas
 - **Non-blocking I/O**: Todos los sockets son no bloqueantes
 - **Event-driven architecture**: Loop principal basado en eventos
+
+---
+
+## 📚 TEORÍA ESENCIAL: SOCKETS, HEADERS HTTP Y MÉTODOS {#teoría-esencial}
+
+### 🔌 ¿QUÉ ES UN SOCKET?
+
+Un **socket** es un punto final de comunicación bidireccional que permite que dos procesos (o programas) se comuniquen a través de una red. Es la abstracción fundamental de la programación de redes.
+
+#### Conceptos Fundamentales:
+
+1. **Socket como File Descriptor**:
+   - En Unix/Linux, un socket es tratado como un file descriptor (fd)
+   - Se puede leer (`recv()`, `read()`) y escribir (`send()`, `write()`) como un archivo
+   - Cada socket tiene un número único (fd) que lo identifica
+
+2. **Tipos de Sockets**:
+   - **Socket de Escucha (Listening Socket)**: Espera conexiones entrantes
+     - Se crea con `socket()`
+     - Se asocia a una dirección IP y puerto con `bind()`
+     - Se pone en modo escucha con `listen()`
+     - Acepta conexiones con `accept()`
+   - **Socket de Cliente**: Representa una conexión activa con un cliente
+     - Se crea automáticamente cuando `accept()` acepta una conexión
+     - Se usa para comunicarse con ese cliente específico
+
+3. **Ciclo de Vida de un Socket**:
+   ```
+   socket() → bind() → listen() → accept() → recv()/send() → close()
+   ```
+
+4. **Non-blocking vs Blocking**:
+   - **Blocking**: Las operaciones esperan hasta completarse (puede bloquear el programa)
+   - **Non-blocking**: Las operaciones retornan inmediatamente, incluso si no hay datos
+     - Si no hay datos, retorna -1 con `errno = EAGAIN`
+     - Permite que el programa continúe atendiendo otros sockets
+
+#### En nuestro proyecto:
+
+```cpp
+// Server.cpp: Creación de socket de escucha
+int sock = socket(AF_INET, SOCK_STREAM, 0);  // Crea socket TCP/IP
+bind(sock, (struct sockaddr*)&addr, sizeof(addr));  // Asocia a IP:puerto
+listen(sock, SOMAXCONN);  // Pone en modo escucha
+fcntl(sock, F_SETFL, O_NONBLOCK);  // Hace no bloqueante
+```
+
+```cpp
+// Listener.cpp: Aceptar nueva conexión
+int clientFd = accept(listeningSocket, NULL, NULL);  // Crea socket de cliente
+// clientFd es un nuevo file descriptor para esta conexión específica
+```
+
+**¿Por qué usamos sockets?**
+- Permiten comunicación en red entre cliente y servidor
+- Cada conexión tiene su propio socket, permitiendo múltiples clientes simultáneos
+- Los sockets son la base de toda comunicación HTTP
+
+---
+
+### 📨 ¿QUÉ ES UN HEADER HTTP?
+
+Los **headers HTTP** son metadatos que acompañan a las peticiones y respuestas HTTP. Proporcionan información adicional sobre la petición/respuesta, el cliente, el servidor, y cómo debe procesarse el contenido.
+
+#### Estructura de un Header:
+
+```
+Nombre-Header: valor del header\r\n
+```
+
+Ejemplo:
+```
+Host: localhost:8080\r\n
+Content-Type: text/html\r\n
+Content-Length: 1234\r\n
+Connection: keep-alive\r\n
+```
+
+#### Headers Importantes en HTTP:
+
+1. **Host**:
+   - Indica el nombre de dominio y puerto del servidor
+   - Ejemplo: `Host: localhost:8080`
+   - **Uso en webserv**: Se usa para routing de servidores virtuales
+
+2. **Content-Type**:
+   - Indica el tipo MIME del contenido
+   - Ejemplo: `Content-Type: text/html; charset=utf-8`
+   - **Uso en webserv**: Determina cómo el navegador debe interpretar el contenido
+
+3. **Content-Length**:
+   - Indica el tamaño del body en bytes
+   - Ejemplo: `Content-Length: 1024`
+   - **Uso en webserv**: Indica cuántos bytes leer del body del request
+
+4. **Connection**:
+   - Controla si la conexión se mantiene abierta
+   - Valores: `keep-alive` o `close`
+   - **Uso en webserv**: Determina si reutilizar la conexión para múltiples requests
+
+5. **User-Agent**:
+   - Identifica el cliente (navegador, herramienta)
+   - Ejemplo: `User-Agent: Mozilla/5.0...`
+
+6. **Accept**:
+   - Indica qué tipos de contenido acepta el cliente
+   - Ejemplo: `Accept: text/html,application/json`
+
+#### Headers en Requests vs Responses:
+
+**Request Headers** (enviados por el cliente):
+```
+GET /index.html HTTP/1.1
+Host: localhost:8080
+User-Agent: curl/7.68.0
+Accept: */*
+Connection: keep-alive
+```
+
+**Response Headers** (enviados por el servidor):
+```
+HTTP/1.1 200 OK
+Server: webserv/1.0
+Date: Mon, 01 Jan 2024 12:00:00 GMT
+Content-Type: text/html
+Content-Length: 1234
+Connection: keep-alive
+```
+
+#### En nuestro proyecto:
+
+```cpp
+// Request.cpp: Parseo de headers
+std::map<std::string, std::string> _headers;  // Almacena todos los headers
+
+// Ejemplo de uso:
+if (request.hasHeader("Content-Length")) {
+    size_t length = request.getContentLength();  // Lee el tamaño del body
+}
+```
+
+```cpp
+// Response.cpp: Construcción de headers
+response.setHeader("Content-Type", "text/html");
+response.setHeader("Content-Length", "1234");
+response.setHeader("Connection", "keep-alive");
+```
+
+**¿Por qué son importantes los headers?**
+- Permiten negociación de contenido (idioma, formato)
+- Controlan el comportamiento de la conexión (keep-alive, timeouts)
+- Proporcionan metadatos esenciales (tamaño, tipo de contenido)
+- Permiten routing de servidores virtuales (header Host)
+
+---
+
+### 🌐 MÉTODOS HTTP SOPORTADOS: GET, POST Y DELETE
+
+Los **métodos HTTP** (también llamados "verbos HTTP") definen la acción que el cliente quiere realizar sobre un recurso identificado por la URI.
+
+#### GET - Obtener Recursos
+
+**¿Qué hace GET?**
+- Solicita una representación de un recurso específico
+- Es **idempotente**: múltiples requests idénticos tienen el mismo efecto
+- Es **seguro**: no modifica el estado del servidor
+- No debe tener body (aunque algunos clientes lo permiten)
+
+**Formato del Request:**
+```
+GET /index.html HTTP/1.1
+Host: localhost:8080
+```
+
+**Casos de Uso:**
+- Cargar una página web
+- Obtener una imagen
+- Recuperar datos de una API
+
+**En nuestro proyecto:**
+```cpp
+// FileHandler.cpp: handleGet()
+void FileHandler::handleGet(...) {
+    // 1. Verificar si el archivo existe
+    if (!Utils::fileExists(filePath)) {
+        handleError(404, server, response);
+        return;
+    }
+    
+    // 2. Si es directorio, mostrar autoindex o buscar index.html
+    if (Utils::isDirectory(filePath)) {
+        if (location->autoindex) {
+            // Generar listado HTML del directorio
+            response.setBody(Utils::generateAutoindex(...));
+        } else {
+            // Buscar archivo index.html
+            std::string indexFile = findIndexFile(filePath, server->index);
+        }
+    }
+    
+    // 3. Leer y servir el archivo
+    std::string content = Utils::readFile(filePath);
+    response.setStatus(200);
+    response.setBody(content);
+    response.setHeader("Content-Type", Utils::getMimeType(filePath));
+}
+```
+
+**Códigos de Estado Comunes:**
+- `200 OK`: Archivo encontrado y servido correctamente
+- `404 Not Found`: El recurso no existe
+- `403 Forbidden`: No hay permisos para acceder
+- `301 Moved Permanently`: Redirección
+
+---
+
+#### POST - Enviar Datos al Servidor
+
+**¿Qué hace POST?**
+- Envía datos al servidor para procesamiento
+- Puede crear nuevos recursos o modificar existentes
+- **NO es idempotente**: múltiples requests pueden tener efectos diferentes
+- **NO es seguro**: modifica el estado del servidor
+- Tiene body con los datos a enviar
+
+**Formato del Request:**
+```
+POST /uploads/ HTTP/1.1
+Host: localhost:8080
+Content-Type: application/octet-stream
+Content-Length: 1024
+
+[datos del archivo aquí...]
+```
+
+**Casos de Uso:**
+- Subir archivos al servidor
+- Enviar formularios HTML
+- Crear nuevos recursos en una API REST
+
+**En nuestro proyecto:**
+```cpp
+// FileHandler.cpp: handlePost()
+void FileHandler::handlePost(...) {
+    // 1. Verificar límite de tamaño del body
+    if (request.getBody().size() > clientMaxBodySize) {
+        handleError(413, server, response);  // Payload Too Large
+        return;
+    }
+    
+    // 2. Determinar ruta de destino
+    std::string uploadPath = filePath;
+    if (Utils::isDirectory(filePath)) {
+        // Generar nombre único para el archivo
+        uploadPath = filePath + generateUniqueFilename();
+    }
+    
+    // 3. Escribir el body del request al archivo
+    std::ofstream file(uploadPath.c_str(), std::ios::binary);
+    file.write(request.getBody().c_str(), request.getBody().size());
+    file.close();
+    
+    // 4. Responder con éxito
+    response.setStatus(201);  // Created
+    response.setBody("File uploaded successfully");
+}
+```
+
+**Códigos de Estado Comunes:**
+- `201 Created`: Recurso creado exitosamente
+- `413 Payload Too Large`: El body excede el límite permitido
+- `400 Bad Request`: El request es inválido
+- `500 Internal Server Error`: Error al escribir el archivo
+
+**Diferencia clave con GET:**
+- GET: "Dame este recurso"
+- POST: "Toma estos datos y haz algo con ellos"
+
+---
+
+#### DELETE - Eliminar Recursos
+
+**¿Qué hace DELETE?**
+- Solicita la eliminación de un recurso específico
+- Es **idempotente**: eliminar un recurso que ya no existe tiene el mismo efecto
+- **NO es seguro**: modifica el estado del servidor
+- Generalmente no tiene body
+
+**Formato del Request:**
+```
+DELETE /uploads/test.txt HTTP/1.1
+Host: localhost:8080
+```
+
+**Casos de Uso:**
+- Eliminar archivos del servidor
+- Borrar recursos en una API REST
+- Limpiar contenido temporal
+
+**En nuestro proyecto:**
+```cpp
+// FileHandler.cpp: handleDelete()
+void FileHandler::handleDelete(...) {
+    // 1. Verificar que el archivo existe
+    if (!Utils::fileExists(filePath)) {
+        handleError(404, server, response);
+        return;
+    }
+    
+    // 2. Verificar que no es un directorio (por seguridad)
+    if (Utils::isDirectory(filePath)) {
+        handleError(403, server, response);  // Forbidden
+        return;
+    }
+    
+    // 3. Eliminar el archivo
+    if (std::remove(filePath.c_str()) != 0) {
+        handleError(500, server, response);  // Error al eliminar
+        return;
+    }
+    
+    // 4. Responder con éxito (sin body)
+    response.setStatus(204);  // No Content
+}
+```
+
+**Códigos de Estado Comunes:**
+- `204 No Content`: Recurso eliminado exitosamente (sin body en respuesta)
+- `404 Not Found`: El recurso no existe
+- `403 Forbidden`: No se permite eliminar (directorio, permisos)
+- `500 Internal Server Error`: Error al eliminar el archivo
+
+**Características Importantes:**
+- DELETE es idempotente: eliminar dos veces el mismo archivo tiene el mismo efecto
+- No retorna el contenido eliminado (por eso 204 No Content)
+
+---
+
+#### Comparación de Métodos
+
+| Método | Idempotente | Seguro | Body | Uso Principal |
+|--------|-------------|--------|------|---------------|
+| **GET** | ✅ Sí | ✅ Sí | ❌ No | Obtener recursos |
+| **POST** | ❌ No | ❌ No | ✅ Sí | Crear/modificar recursos |
+| **DELETE** | ✅ Sí | ❌ No | ❌ No | Eliminar recursos |
+
+**Idempotente**: Múltiples requests idénticos tienen el mismo efecto  
+**Seguro**: No modifica el estado del servidor
 
 ---
 
@@ -61,7 +410,38 @@ parser.parse();
 
 **Resultado**: Vector de `ServerConfig` con toda la configuración
 
-#### Paso 1.3: Creación de Servidores
+#### Paso 1.3: Creación de Servidores y Sockets
+
+**Teoría: ¿Cómo se crea un socket de escucha?**
+
+1. **socket()**: Crea el file descriptor del socket
+   ```cpp
+   int sock = socket(AF_INET, SOCK_STREAM, 0);
+   // AF_INET: IPv4
+   // SOCK_STREAM: TCP (conexión orientada)
+   // 0: Protocolo por defecto (TCP)
+   ```
+
+2. **bind()**: Asocia el socket a una dirección IP y puerto
+   ```cpp
+   struct sockaddr_in addr;
+   addr.sin_family = AF_INET;
+   addr.sin_port = htons(8080);  // Puerto en network byte order
+   addr.sin_addr.s_addr = INADDR_ANY;  // Escuchar en todas las interfaces
+   bind(sock, (struct sockaddr*)&addr, sizeof(addr));
+   ```
+
+3. **listen()**: Pone el socket en modo escucha
+   ```cpp
+   listen(sock, SOMAXCONN);  // SOMAXCONN: máximo de conexiones en cola
+   ```
+
+4. **fcntl()**: Hace el socket no bloqueante
+   ```cpp
+   fcntl(sock, F_SETFL, O_NONBLOCK);
+   // Ahora accept(), recv(), send() no bloquean
+   ```
+
 ```cpp
 // main.cpp línea 37-40
 std::vector<Server*> servers;
@@ -96,6 +476,26 @@ listener.run();  // Bucle principal (nunca retorna)
 El `Listener::run()` es el corazón del servidor. Funciona así:
 
 #### Paso 2.1: Preparar File Descriptors para poll()
+
+**Teoría: ¿Qué es poll()?**
+
+`poll()` es una función de I/O multiplexing que permite monitorear múltiples file descriptors simultáneamente. Espera hasta que uno o más fds estén listos para I/O.
+
+**Estructura pollfd:**
+```cpp
+struct pollfd {
+    int fd;        // File descriptor a monitorear
+    short events;  // Eventos a monitorear (POLLIN, POLLOUT, etc.)
+    short revents; // Eventos que ocurrieron (se llena después de poll())
+};
+```
+
+**Eventos importantes:**
+- `POLLIN`: El fd está listo para leer (hay datos disponibles)
+- `POLLOUT`: El fd está listo para escribir (el buffer tiene espacio)
+- `POLLERR`: Error en el socket
+- `POLLHUP`: El otro extremo cerró la conexión
+
 ```cpp
 // Listener.cpp línea 52-77
 _pollfds.clear();
@@ -159,6 +559,11 @@ if (ret == 0) {
 - Previene conexiones colgadas (hanging connections)
 
 #### Paso 2.4: Aceptar Nuevas Conexiones
+
+**Teoría: ¿Cómo funciona accept()?**
+
+`accept()` crea un nuevo socket para cada conexión entrante. El socket original sigue escuchando, y el nuevo socket se usa para comunicarse con ese cliente específico.
+
 ```cpp
 // Listener.cpp línea 99-108
 for (cada pollfd) {
@@ -185,6 +590,7 @@ newConnections.push_back(conn);
 - ✅ `accept()` es non-blocking (el socket de escucha es non-blocking)
 - ✅ Si falla, simplemente retorna (no crashea)
 - ✅ Crea nuevo `ClientConnection` para cada cliente
+- ✅ Cada cliente tiene su propio file descriptor único
 
 #### Paso 2.5: Manejar Conexiones Existentes
 ```cpp
@@ -249,6 +655,21 @@ for (cada conexión) {
 ### FASE 3: PROCESAMIENTO DE REQUESTS
 
 #### Paso 3.1: Leer Request (readRequest)
+
+**Teoría: ¿Cómo se lee un request HTTP?**
+
+Un request HTTP tiene esta estructura:
+```
+GET /index.html HTTP/1.1\r\n          ← Request Line
+Host: localhost:8080\r\n               ← Headers
+User-Agent: curl/7.68.0\r\n
+Content-Length: 0\r\n
+\r\n                                   ← Línea vacía (fin de headers)
+[body si hay]                          ← Body (opcional)
+```
+
+El parsing se hace incrementalmente porque los datos pueden llegar en múltiples chunks.
+
 ```cpp
 // ClientConnection.cpp línea 45-66
 bool ClientConnection::readRequest() {
@@ -276,6 +697,7 @@ bool ClientConnection::readRequest() {
 2. **Parse Headers**: `Host: localhost\r\nContent-Length: 100\r\n\r\n`
    - Almacena en `std::map<std::string, std::string>`
    - Extrae `Content-Length` para saber cuánto leer del body
+   - Detecta `Connection: keep-alive` o `Connection: close`
 
 3. **Parse Body**: Si hay `Content-Length`, lee exactamente esos bytes
 
@@ -283,6 +705,14 @@ bool ClientConnection::readRequest() {
 - `REQUEST_LINE` → `HEADERS` → `BODY` → `COMPLETE`
 
 #### Paso 3.2: Procesar Request (processRequest)
+
+**Teoría: ¿Cómo funciona el routing?**
+
+El routing determina qué servidor y qué location manejan el request. Se basa en:
+1. **Puerto**: Obtenido del socket con `getsockname()`
+2. **Hostname**: Obtenido del header `Host:`
+3. **Path**: Obtenido de la URI del request
+
 ```cpp
 // ClientConnection.cpp línea 68-160
 bool ClientConnection::processRequest(...) {
@@ -340,6 +770,21 @@ bool ClientConnection::processRequest(...) {
    - Verifica si hay `cgi_pass` para esa extensión
 
 #### Paso 3.3: Escribir Response (writeResponse)
+
+**Teoría: ¿Cómo se construye una response HTTP?**
+
+Una response HTTP tiene esta estructura:
+```
+HTTP/1.1 200 OK\r\n                    ← Status Line
+Server: webserv/1.0\r\n                ← Headers
+Date: Mon, 01 Jan 2024 12:00:00 GMT\r\n
+Content-Type: text/html\r\n
+Content-Length: 1234\r\n
+Connection: keep-alive\r\n
+\r\n                                   ← Línea vacía (fin de headers)
+<html>...</html>                       ← Body
+```
+
 ```cpp
 // ClientConnection.cpp línea 163-187
 bool ClientConnection::writeResponse() {
@@ -403,6 +848,31 @@ ServerConfig {
 ### 2. Server
 **Responsabilidad**: Crear y gestionar sockets de escucha
 
+**Teoría: ¿Cómo funciona la creación de sockets?**
+
+El proceso de creación de un socket de escucha sigue estos pasos:
+
+1. **socket()**: Crea el file descriptor
+   - `AF_INET`: Protocolo IPv4
+   - `SOCK_STREAM`: TCP (conexión orientada, confiable)
+   - Retorna un fd que representa el socket
+
+2. **setsockopt()**: Configura opciones del socket
+   - `SO_REUSEADDR`: Permite reutilizar el puerto inmediatamente después de cerrar
+   - Evita el error "Address already in use" al reiniciar el servidor
+
+3. **bind()**: Asocia el socket a una dirección
+   - Especifica en qué IP y puerto escuchar
+   - `INADDR_ANY` (0.0.0.0): Escucha en todas las interfaces de red
+
+4. **listen()**: Pone el socket en modo escucha
+   - Crea una cola para conexiones pendientes
+   - `SOMAXCONN`: Tamaño máximo de la cola
+
+5. **fcntl()**: Hace el socket no bloqueante
+   - `O_NONBLOCK`: Las operaciones no bloquean
+   - `accept()` retorna inmediatamente, incluso si no hay conexiones
+
 **Componentes:**
 - `createSocket()`: Crea socket, bind, listen
 - `_globalSocketMap`: Mapa estático que comparte sockets entre servidores
@@ -414,6 +884,13 @@ ServerConfig {
 
 ### 3. Listener
 **Responsabilidad**: Bucle principal de eventos (event loop)
+
+**Teoría: ¿Qué es un Event Loop?**
+
+Un event loop es un patrón de diseño que espera y distribuye eventos. En nuestro caso:
+- Espera eventos de I/O usando `poll()`
+- Cuando un fd está listo, ejecuta la acción correspondiente
+- Permite manejar múltiples conexiones sin threads
 
 **Componentes:**
 - `run()`: Bucle principal con `poll()`
@@ -433,6 +910,28 @@ ServerConfig {
 
 ### 4. ClientConnection
 **Responsabilidad**: Gestionar una conexión de cliente
+
+**Teoría: ¿Cómo se gestiona el ciclo de vida de una conexión?**
+
+1. **Creación**: Cuando `accept()` acepta una conexión
+   - Se crea un nuevo `ClientConnection` con el fd del cliente
+   - El socket se configura como non-blocking
+
+2. **Lectura**: Estado `READING_REQUEST`
+   - Se lee el request HTTP en chunks
+   - Se parsea incrementalmente
+
+3. **Procesamiento**: Estado `PROCESSING`
+   - Se enruta el request
+   - Se ejecuta la acción (GET, POST, DELETE, CGI)
+
+4. **Escritura**: Estado `WRITING_RESPONSE`
+   - Se envía la response en chunks
+   - Se maneja keep-alive
+
+5. **Cierre**: Estado `CLOSING`
+   - Se cierra el socket
+   - Se libera la memoria
 
 **Estados:**
 - `READING_REQUEST`: Leyendo request HTTP
@@ -454,6 +953,24 @@ ServerConfig {
 ### 5. Request
 **Responsabilidad**: Parsear y almacenar request HTTP
 
+**Teoría: ¿Cómo se parsea un request HTTP?**
+
+Un request HTTP tiene esta estructura:
+```
+GET /index.html?query=value HTTP/1.1\r\n    ← Request Line
+Host: localhost:8080\r\n                     ← Headers
+Content-Type: text/html\r\n
+Content-Length: 100\r\n
+\r\n                                         ← Línea vacía
+[body]                                       ← Body (opcional)
+```
+
+El parsing se hace en estados:
+1. **REQUEST_LINE**: Parsear método, URI, versión
+2. **HEADERS**: Parsear todos los headers hasta línea vacía
+3. **BODY**: Leer body según Content-Length
+4. **COMPLETE**: Request completo, listo para procesar
+
 **Componentes:**
 - `parseChunk()`: Parsea request incrementalmente
 - `parseRequestLine()`: Parsea línea de request
@@ -473,6 +990,20 @@ string _body;          // Body del request
 
 ### 6. Response
 **Responsabilidad**: Construir response HTTP
+
+**Teoría: ¿Cómo se construye una response HTTP?**
+
+Una response HTTP tiene esta estructura:
+```
+HTTP/1.1 200 OK\r\n                         ← Status Line
+Server: webserv/1.0\r\n                     ← Headers
+Date: Mon, 01 Jan 2024 12:00:00 GMT\r\n
+Content-Type: text/html\r\n
+Content-Length: 1234\r\n
+Connection: keep-alive\r\n
+\r\n                                         ← Línea vacía
+<html>...</html>                            ← Body
+```
 
 **Componentes:**
 - `setStatus()`: Establece código de estado
@@ -494,6 +1025,13 @@ Content-Length: 1234\r\n
 ### 7. Router
 **Responsabilidad**: Enrutar requests a servidor/location correctos
 
+**Teoría: ¿Cómo funciona el routing de servidores virtuales?**
+
+El routing permite que múltiples sitios web compartan el mismo servidor físico. Se basa en:
+1. **Puerto**: Cada servidor puede escuchar en diferentes puertos
+2. **Hostname**: El header `Host:` identifica qué servidor virtual usar
+3. **Path**: Las locations permiten diferentes configuraciones por ruta
+
 **Componentes:**
 - `route()`: Función principal de routing
 - `findServer()`: Encuentra servidor por puerto y hostname
@@ -513,6 +1051,19 @@ Content-Length: 1234\r\n
 ### 8. FileHandler
 **Responsabilidad**: Manejar archivos estáticos
 
+**Teoría: ¿Cómo se sirven archivos estáticos?**
+
+Los archivos estáticos son archivos que se sirven directamente sin procesamiento:
+- HTML, CSS, JavaScript
+- Imágenes (PNG, JPG, GIF)
+- Archivos de texto
+
+El proceso:
+1. Verificar que el archivo existe
+2. Leer el contenido del archivo
+3. Determinar el Content-Type según la extensión
+4. Enviar la response con el contenido
+
 **Componentes:**
 - `handleGet()`: Servir archivos (GET/HEAD)
 - `handlePost()`: Subir archivos (POST)
@@ -527,32 +1078,7 @@ Content-Length: 1234\r\n
 - ✅ Eliminación de archivos
 - ✅ Páginas de error personalizadas
 
-### 9. CGIHandler
-**Responsabilidad**: Ejecutar scripts CGI
-
-**Componentes:**
-- `execute()`: Ejecuta script CGI
-- `buildEnv()`: Construye variables de entorno
-- `freeEnv()`: Libera memoria de env
-
-**Proceso:**
-1. Crear pipes para stdin/stdout
-2. `fork()` para crear proceso hijo
-3. Hijo: `dup2()` para redirigir I/O, `execve()` para ejecutar script
-4. Padre: Escribe body a stdin del hijo, lee stdout del hijo
-5. Parsear headers del output CGI
-6. Retornar output
-
-**Variables de entorno CGI:**
-- `REQUEST_METHOD`
-- `SCRIPT_FILENAME`
-- `QUERY_STRING`
-- `HTTP_HOST`
-- `CONTENT_TYPE`
-- `CONTENT_LENGTH`
-- etc.
-
-### 10. Utils
+### 9. Utils
 **Responsabilidad**: Funciones auxiliares
 
 **Funciones:**
@@ -1112,6 +1638,28 @@ El código maneja errores correctamente sin crashes. Para verificar > 99.5%, se 
 - El programa termina con error
 - Esto previene que el servidor inicie con configuración inválida
 
+### P: ¿Qué es un socket y cómo funciona?
+**R**: 
+- Un socket es un punto final de comunicación bidireccional
+- Permite que dos procesos se comuniquen a través de una red
+- En Unix/Linux, se trata como un file descriptor
+- Los sockets de escucha esperan conexiones, los sockets de cliente representan conexiones activas
+- En nuestro proyecto, usamos sockets TCP/IP no bloqueantes para manejar múltiples clientes simultáneamente
+
+### P: ¿Qué son los headers HTTP y para qué sirven?
+**R**: 
+- Los headers HTTP son metadatos que acompañan requests y responses
+- Proporcionan información sobre el contenido, el cliente, el servidor
+- Headers importantes: `Host` (routing), `Content-Type` (tipo MIME), `Content-Length` (tamaño), `Connection` (keep-alive)
+- Permiten negociación de contenido y control del comportamiento de la conexión
+
+### P: ¿Cuál es la diferencia entre GET, POST y DELETE?
+**R**: 
+- **GET**: Obtiene recursos, es idempotente y seguro, no tiene body
+- **POST**: Envía datos al servidor, no es idempotente ni seguro, tiene body
+- **DELETE**: Elimina recursos, es idempotente pero no seguro, generalmente sin body
+- Cada método tiene casos de uso específicos y códigos de estado asociados
+
 ---
 
 ## 🎯 RESUMEN PARA LA DEFENSA
@@ -1135,7 +1683,13 @@ El código maneja errores correctamente sin crashes. Para verificar > 99.5%, se 
 4. **Routing**: `src/Router.cpp:61-123`
 5. **Limpieza de conexiones**: `src/Listener.cpp:192-202`
 
+### Conceptos Teóricos Clave:
+1. **Sockets**: Puntos finales de comunicación, file descriptors, non-blocking I/O
+2. **Headers HTTP**: Metadatos, routing, negociación de contenido
+3. **Métodos HTTP**: GET (obtener), POST (enviar), DELETE (eliminar)
+4. **I/O Multiplexing**: poll() permite monitorear múltiples fds simultáneamente
+5. **Event Loop**: Patrón que espera y distribuye eventos de I/O
+
 ---
 
 **¡Buena suerte con tu defensa! 🚀**
-
